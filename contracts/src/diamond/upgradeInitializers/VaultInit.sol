@@ -1,11 +1,11 @@
 //SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import {LibDiamond} from "lib/diamond-1-hardhat/contracts/libraries/LibDiamond.sol";
-import {IDiamondCut} from "lib/diamond-1-hardhat/contracts/interfaces/IDiamondCut.sol";
-import {IDiamondLoupe} from "lib/diamond-1-hardhat/contracts/interfaces/IDiamondLoupe.sol";
-import {IERC173} from "lib/diamond-1-hardhat/contracts/interfaces/IERC173.sol";
-import {IERC165} from "lib/diamond-1-hardhat/contracts/interfaces/IERC165.sol";
+import {LibDiamond} from "diamond-1-hardhat/libraries/LibDiamond.sol";
+import {IDiamondCut} from "diamond-1-hardhat/interfaces/IDiamondCut.sol";
+import {IDiamondLoupe} from "diamond-1-hardhat/interfaces/IDiamondLoupe.sol";
+import {IERC173} from "diamond-1-hardhat/interfaces/IERC173.sol";
+import {IERC165} from "diamond-1-hardhat/interfaces/IERC165.sol";
 import {LibVault} from "../libraries/LibVault.sol";
 
 contract VaultInit {

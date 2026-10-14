@@ -1,14 +1,14 @@
 //SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import {IDiamondCut} from "lib/diamond-1-hardhat/contracts/interfaces/IDiamondCut.sol";
-import {IDiamondLoupe} from "lib/diamond-1-hardhat/contracts/interfaces/IDiamondLoupe.sol";
-import {IERC173} from "lib/diamond-1-hardhat/contracts/interfaces/IERC173.sol";
-import {IERC165} from "lib/diamond-1-hardhat/contracts/interfaces/IERC165.sol";
+import {IDiamondCut} from "diamond-1-hardhat/interfaces/IDiamondCut.sol";
+import {IDiamondLoupe} from "diamond-1-hardhat/interfaces/IDiamondLoupe.sol";
+import {IERC173} from "diamond-1-hardhat/interfaces/IERC173.sol";
+import {IERC165} from "diamond-1-hardhat/interfaces/IERC165.sol";
 import {SavingsFacet} from "./facets/SavingsFacet.sol";
+import {EmergencyFacet} from "./facets/EmergencyFacet.sol";
 
 library VaultSelectors {
-
     function diamondCut() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](1);
         s[0] = IDiamondCut.diamondCut.selector;
@@ -40,6 +40,8 @@ library VaultSelectors {
         s[6] = SavingsFacet.version.selector;
     }
 
-
-
+    function emergency() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = EmergencyFacet.emergencyWithdraw.selector;
+    }
 }

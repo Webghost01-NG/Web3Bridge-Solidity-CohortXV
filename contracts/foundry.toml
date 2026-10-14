@@ -1,6 +1,12 @@
 [profile.default]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["lib/forge-std", "lib/diamond-1-hardhat"]
+evm_version = "prague"
+auto_detect_remappings = false
+remappings = [
+  "forge-std/=lib/forge-std/src/",
+  "diamond-1-hardhat/=lib/diamond-1-hardhat/contracts/",
+]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

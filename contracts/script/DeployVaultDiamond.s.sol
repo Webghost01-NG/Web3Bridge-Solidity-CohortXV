@@ -2,14 +2,14 @@
 pragma solidity ^0.8.0;
 
 import {Script, console} from "forge-std/Script.sol";
-import {Diamond, DiamondArgs} from "lib/diamond-1-hardhat/contracts/Diamond.sol";
-import {IDiamond} from "lib/diamond-1-hardhat/contracts/interfaces/IDiamond.sol";
+import {Diamond, DiamondArgs} from "diamond-1-hardhat/Diamond.sol";
+import {IDiamond} from "diamond-1-hardhat/interfaces/IDiamond.sol";
 import {VaultSelectors} from "../src/diamond/VaultSelectors.sol";
 import {SavingsFacet} from "../src/diamond/facets/SavingsFacet.sol";
 import {VaultInit} from "../src/diamond/upgradeInitializers/VaultInit.sol";
-import {OwnershipFacet} from "../lib/diamond-1-hardhat/contracts/facets/OwnershipFacet.sol";
-import {DiamondLoupeFacet} from "../lib/diamond-1-hardhat/contracts/facets/DiamondLoupeFacet.sol";
-import {DiamondCutFacet} from "../lib/diamond-1-hardhat/contracts/facets/DiamondCutFacet.sol";
+import {OwnershipFacet} from "diamond-1-hardhat/facets/OwnershipFacet.sol";
+import {DiamondLoupeFacet} from "diamond-1-hardhat/facets/DiamondLoupeFacet.sol";
+import {DiamondCutFacet} from "diamond-1-hardhat/facets/DiamondCutFacet.sol";
 
 contract DeployVaultDiamond is Script {
     function run() external returns (address vault) {
