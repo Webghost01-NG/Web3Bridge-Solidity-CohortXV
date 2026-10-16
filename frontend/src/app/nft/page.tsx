@@ -158,7 +158,7 @@ export default function NftPage() {
       if (!mintedEvent) throw new Error("The confirmed transaction did not contain a Minted event.");
 
       const { tokenId, uri, to } = mintedEvent.args;
-      const metadata = knownMetadata ?? await fetchNftMetadata(uri);
+      const metadata = knownMetadata ?? await fetchNftMetadata(uri, `Profile NFT #${tokenId}`);
       setResult({ tokenId: tokenId.toString(), uri, owner: to, metadata, hash });
       setLookupId(tokenId.toString());
       setSubmittedHash(null);
@@ -281,7 +281,7 @@ export default function NftPage() {
       }
       let metadata: NftMetadata;
       try {
-        metadata = await fetchNftMetadata(uri);
+        metadata = await fetchNftMetadata(uri, `Profile NFT #${lookupId}`);
       } catch {
         setLookupStatus(`Token #${lookupId} exists, but its IPFS metadata is unavailable.`);
         return;

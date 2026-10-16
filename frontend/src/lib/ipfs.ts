@@ -25,7 +25,7 @@ export async function uploadNft(image: File, name: string, description: string) 
   return { uri: `ipfs://${metadataCid}`, metadata };
 }
 
-export async function fetchNftMetadata(uri: string): Promise<NftMetadata> {
+export async function fetchNftMetadata(uri: string, fallbackName = "Profile NFT"): Promise<NftMetadata> {
   const cid = uri.startsWith("ipfs://") ? uri.slice(7).replace(/^ipfs\//, "") : "";
   const urls = cid
     ? [`https://gateway.pinata.cloud/ipfs/${cid}`, `https://ipfs.io/ipfs/${cid}`]
@@ -35,6 +35,14 @@ export async function fetchNftMetadata(uri: string): Promise<NftMetadata> {
     try {
       const response = await fetch(url);
       if (!response.ok) continue;
+      const contentType = response.headers.get("content-type") ?? "";
+      if (contentType.startsWith("image/")) {
+        return {
+          name: fallbackName,
+          description: "This NFT stores its image directly on IPFS.",
+          image: uri,
+        };
+      }
       const metadata = (await response.json()) as Partial<NftMetadata>;
       if (metadata.name && metadata.description && metadata.image) return metadata as NftMetadata;
     } catch {
