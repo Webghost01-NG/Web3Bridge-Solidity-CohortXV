@@ -15,21 +15,42 @@ export default function Home() {
         </div>
       </section>
 
-      <div className="journey-grid">
-        <Link href="/ens" className="journey-panel">
-          <span className="journey-network">Ethereum mainnet</span>
-          <h2>Find an ENS profile</h2>
-          <p>Resolve an address, avatar, description, Twitter record, and ETH balance without connecting a wallet.</p>
-          <strong>Start a lookup <span aria-hidden="true">→</span></strong>
-        </Link>
+      <section className="explore-section" aria-labelledby="explore-heading">
+        <div className="explore-heading">
+          <h2 id="explore-heading">Explore the app</h2>
+          <p>Four ways to explore identity, create, and follow profile NFTs.</p>
+        </div>
 
-        <Link href="/nft" className="journey-panel journey-panel-dark">
-          <span className="journey-network">Ethereum Sepolia</span>
-          <h2>Make my profile card</h2>
-          <p>Upload a picture and metadata to IPFS, switch networks, mint, then read the real profile back from the chain.</p>
-          <strong>Create a card <span aria-hidden="true">→</span></strong>
-        </Link>
-      </div>
+        <div className="journey-grid">
+          <Link href="/ens" className="journey-panel">
+            <span className="journey-network">Ethereum mainnet</span>
+            <h3>Find an ENS profile</h3>
+            <p>Look up an ENS name, its public profile, and its ETH balance without connecting a wallet.</p>
+            <strong>Start a lookup <span aria-hidden="true">→</span></strong>
+          </Link>
+
+          <Link href="/nft" className="journey-panel journey-panel-dark">
+            <span className="journey-network">Ethereum Sepolia</span>
+            <h3>Make my profile card</h3>
+            <p>Upload a picture and metadata to IPFS, mint your NFT, then read the profile back from the chain.</p>
+            <strong>Create a card <span aria-hidden="true">→</span></strong>
+          </Link>
+
+          <Link href="/aa" className="journey-panel journey-panel-feature">
+            <span className="journey-network">Pimlico · Sepolia</span>
+            <h3>Try a gasless mint</h3>
+            <p>Send two profile mints in one smart-account operation, sponsored by a paymaster.</p>
+            <strong>Open gasless mint <span aria-hidden="true">→</span></strong>
+          </Link>
+
+          <Link href="/notifications" className="journey-panel journey-panel-feature">
+            <span className="journey-network">Live on Sepolia</span>
+            <h3>Follow live mints</h3>
+            <p>Watch new profile mints, see recipient ENS names, and enable browser alerts while the page is open.</p>
+            <strong>View live alerts <span aria-hidden="true">→</span></strong>
+          </Link>
+        </div>
+      </section>
 
       <PricePanel />
 
