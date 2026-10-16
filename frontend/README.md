@@ -47,6 +47,8 @@ To make a card, connect a wallet, choose a picture, enter a name and bio, and pr
 
 Open `/aa`, connect a wallet, and paste an `ipfs://` metadata URI. One wallet signature sends two `ClassNFT.mint(uri)` calls inside one UserOperation; Pimlico's paymaster sponsors the gas.
 
+`PIMLICO_API_KEY` stays in Vercel's server-only environment and is used only by `/api/bundler`; it is never exposed through a `NEXT_PUBLIC_` variable.
+
 UserOperation Etherscan transaction: pending the first live sponsored batch.
 
 On Etherscan, the outer transaction's **From** is Pimlico's bundler, and **To** is the ERC-4337 EntryPoint contract. The bundler submits the transaction, while Pimlico's paymaster deposit covers the UserOperation gas; the smart account is visible inside the EntryPoint event and internal execution.
