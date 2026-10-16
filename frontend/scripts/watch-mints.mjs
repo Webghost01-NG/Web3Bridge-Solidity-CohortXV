@@ -3,13 +3,13 @@ import { dirname, resolve } from "node:path";
 import { createPublicClient, http, parseAbiItem } from "viem";
 import { sepolia } from "viem/chains";
 
-const required = ["NEXT_PUBLIC_NFT_ADDRESS", "NEXT_PUBLIC_SEPOLIA_RPC_URL", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"];
+const required = ["NEXT_PUBLIC_NFT_ADDRESS", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"];
 for (const name of required) {
   if (!process.env[name]) throw new Error(`${name} is required`);
 }
 
 const contract = process.env.NEXT_PUBLIC_NFT_ADDRESS;
-const rpcUrl = process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL;
+const rpcUrl = process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
 const statePath = resolve(process.env.LISTENER_STATE_FILE ?? ".listener/last-block.json");
 const client = createPublicClient({ chain: sepolia, transport: http(rpcUrl) });
 const mintedEvent = parseAbiItem("event Minted(address indexed to, uint256 indexed tokenId, string uri)");
