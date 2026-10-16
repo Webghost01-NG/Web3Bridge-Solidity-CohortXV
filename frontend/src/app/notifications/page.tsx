@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useAccount, useWatchContractEvent } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
 import { sepolia } from "wagmi/chains";
@@ -9,18 +9,26 @@ import { config } from "@/lib/wagmi";
 import { NFT_ADDRESS, nftAbi } from "@/contracts/nft";
 import { Who } from "@/components/Who";
 
-// The Push channel we opt in to. Format (CAIP-10): eip155:<chainId>:<channel address>
-const PUSH_CHANNEL = process.env.NEXT_PUBLIC_PUSH_CHANNEL ?? "eip155:1:0xB88460Bb2696CAb9D66013A05dFF29a28330689D";
+const pushChannel = process.env.NEXT_PUBLIC_PUSH_CHANNEL ?? "";
 
-type Alert = { tokenId: string; to: `0x${string}`; tx: string };
+type Alert = { id: string; tokenId: string; to: `0x${string}`; tx: `0x${string}` };
 type PushNote = { title: string; message: string };
+
+function friendlyPushError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message.includes("reject") || message.includes("denied")) return "The Push sign-in request was cancelled.";
+  return "Push Protocol could not complete that request. Please try again.";
+}
 
 export default function NotificationsPage() {
   const { isConnected } = useAccount();
-
-  // ================= PART 1: our own notifier =================
-  // LISTENER: wagmi asks the chain every 4 seconds for new Minted events from ClassNFT
+  const seenLogs = useRef(new Set<string>());
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [listenerStatus, setListenerStatus] = useState("Listening for new ClassNFT mints on Sepolia…");
+  const [permission, setPermission] = useState(() =>
+    typeof Notification === "undefined" ? "unsupported" : Notification.permission,
+  );
+
   useWatchContractEvent({
     address: NFT_ADDRESS,
     abi: nftAbi,
@@ -28,120 +36,157 @@ export default function NotificationsPage() {
     chainId: sepolia.id,
     pollingInterval: 4_000,
     onLogs(logs) {
+      const freshAlerts: Alert[] = [];
       for (const log of logs) {
-        const alert = { tokenId: log.args.tokenId!.toString(), to: log.args.to!, tx: log.transactionHash! };
-        setAlerts((old) => [alert, ...old]);
+        if (!log.transactionHash || log.logIndex === null || !log.args.to || log.args.tokenId === undefined) continue;
+        const id = `${log.transactionHash}-${log.logIndex}`;
+        if (seenLogs.current.has(id)) continue;
+        seenLogs.current.add(id);
+        const alert = { id, tokenId: log.args.tokenId.toString(), to: log.args.to, tx: log.transactionHash };
+        freshAlerts.push(alert);
 
-        // NOTIFIER: a pop-up from the browser, even if this tab is in the background
         if (Notification.permission === "granted") {
-          new Notification(`NFT #${alert.tokenId} minted`, { body: `to ${alert.to}` });
+          new Notification(`Profile NFT #${alert.tokenId} minted`, {
+            body: `Recipient ${alert.to.slice(0, 8)}…${alert.to.slice(-4)}`,
+            tag: id,
+          });
         }
       }
+
+      if (freshAlerts.length) {
+        setAlerts((current) => [...freshAlerts.reverse(), ...current].slice(0, 30));
+        setListenerStatus(`Received ${freshAlerts.length} new mint event${freshAlerts.length === 1 ? "" : "s"}.`);
+      }
+    },
+    onError() {
+      setListenerStatus("The Sepolia listener lost connection. It will keep trying while this page stays open.");
     },
   });
 
-  // The browser asks the user once: "allow notifications from localhost?"
-  const [permission, setPermission] = useState<string>(() =>
-    typeof Notification === "undefined" ? "unsupported" : Notification.permission,
-  );
-  async function allowPopups() {
+  async function allowBrowserAlerts() {
+    if (typeof Notification === "undefined") return;
     setPermission(await Notification.requestPermission());
   }
 
-  // ================= PART 2: Push Protocol =================
   const [push, setPush] = useState<PushAPI | null>(null);
   const [subscribed, setSubscribed] = useState(false);
   const [inbox, setInbox] = useState<PushNote[]>([]);
   const [channelNews, setChannelNews] = useState<PushNote[]>([]);
-  const [pushStatus, setPushStatus] = useState("");
+  const [pushStatus, setPushStatus] = useState(pushChannel ? "Connect to read your Push inbox." : "A Push staging channel has not been configured yet.");
+
+  async function refreshPush(user = push) {
+    if (!user || !pushChannel) return;
+    const mine = await user.notification.list("INBOX", { limit: 8 });
+    setInbox(mine.map((note: { title: string; message: string }) => ({ title: note.title, message: note.message })));
+    const channel = await user.channel.notifications(pushChannel, { limit: 5 });
+    setChannelNews(channel.notifications.map((note: { notification: { title: string; body: string } }) => ({
+      title: note.notification.title,
+      message: note.notification.body,
+    })));
+  }
 
   async function signInToPush() {
+    if (!pushChannel) return;
     try {
-      setPushStatus("Sign the message in your wallet…");
-      const { PushAPI, CONSTANTS } = await import("@pushprotocol/restapi"); // load the SDK only when needed
+      setPushStatus("Sign the Push Protocol message in your wallet…");
+      const { PushAPI: PushClient, CONSTANTS } = await import("@pushprotocol/restapi");
       const walletClient = await getWalletClient(config);
-      const user = await PushAPI.initialize(walletClient, { env: CONSTANTS.ENV.PROD });
+      if (!walletClient) throw new Error("wallet not connected");
+      const user = await PushClient.initialize(walletClient, { env: CONSTANTS.ENV.STAGING });
       setPush(user);
 
-      const subs = await user.notification.subscriptions();
-      setSubscribed(subs.some((s: { channel: string }) => PUSH_CHANNEL.endsWith(s.channel)));
-      await refresh(user);
-      setPushStatus("Signed in to Push ✅");
-    } catch (e) {
-      setPushStatus(`Error: ${(e as Error).message}`);
+      const subscriptions = await user.notification.subscriptions();
+      const channelAddress = pushChannel.split(":").at(-1)?.toLowerCase();
+      setSubscribed(subscriptions.some((subscription: { channel: string }) => subscription.channel.toLowerCase() === channelAddress));
+      await refreshPush(user);
+      setPushStatus("Push inbox ready.");
+    } catch (error) {
+      setPushStatus(friendlyPushError(error));
     }
   }
 
-  async function optIn() {
-    if (!push) return;
-    setPushStatus("Sign the opt-in in your wallet…");
-    await push.notification.subscribe(PUSH_CHANNEL); // a signature, no gas
-    setSubscribed(true);
-    setPushStatus("Opted in ✅");
-  }
-
-  async function refresh(user = push) {
-    if (!user) return;
-    const mine = await user.notification.list("INBOX", { limit: 5 });
-    setInbox(mine.map((n: PushNote) => ({ title: n.title, message: n.message })));
-    const news = await user.channel.notifications(PUSH_CHANNEL, { limit: 3 });
-    setChannelNews(
-      news.notifications.map((n: { notification: { title: string; body: string } }) => ({
-        title: n.notification.title,
-        message: n.notification.body,
-      })),
-    );
+  async function subscribeToPush() {
+    if (!push || !pushChannel) return;
+    try {
+      setPushStatus("Confirm the free channel subscription…");
+      await push.notification.subscribe(pushChannel);
+      setSubscribed(true);
+      setPushStatus("Subscribed. New channel messages will appear in your Push inbox.");
+    } catch (error) {
+      setPushStatus(friendlyPushError(error));
+    }
   }
 
   return (
-    <div className="space-y-8">
-      <h1 className="text-2xl font-bold">Notifications</h1>
+    <div className="page-stack alerts-page">
+      <header className="page-heading">
+        <div>
+          <h1>See every profile mint live.</h1>
+          <p>This page watches the ClassNFT event stream, resolves recipient identities through ENS, and raises browser alerts as new mints arrive.</p>
+        </div>
+        <span className="network-stamp"><i className="live-pulse" /> Listening on Sepolia</span>
+      </header>
 
-      <section className="space-y-2">
-        <h2 className="text-lg font-semibold">1. Live alerts from our NFT contract</h2>
-        <p className="text-sm text-neutral-600">
-          Event → listener → notifier. Keep this tab open, then mint on <b>/nft</b> or <b>/aa</b> in another tab.
-        </p>
-        {permission !== "granted" && permission !== "unsupported" && (
-          <button className="rounded border px-3 py-1" onClick={allowPopups}>Allow pop-up notifications</button>
-        )}
-        {alerts.length === 0 && <p className="text-sm">Listening… no new mint yet.</p>}
-        <ul className="space-y-1">
-          {alerts.map((a) => (
-            <li key={a.tx + a.tokenId} className="rounded border bg-white p-2 text-sm">
-              🔔 NFT <b>#{a.tokenId}</b> minted to <Who address={a.to} /> ·{" "}
-              <a className="underline" href={`https://sepolia.etherscan.io/tx/${a.tx}`} target="_blank">tx</a>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section className="space-y-2">
-        <h2 className="text-lg font-semibold">2. Your wallet&apos;s inbox on Push Protocol</h2>
-        {!push && (
-          <button className="rounded bg-black px-3 py-1 text-white disabled:opacity-50" disabled={!isConnected} onClick={signInToPush}>
-            Sign in to Push
-          </button>
-        )}
-        {push && !subscribed && <button className="rounded border px-3 py-1" onClick={optIn}>Opt in to the channel</button>}
-        {push && subscribed && <p className="text-sm">You are subscribed to {PUSH_CHANNEL}.</p>}
-        {push && <button className="ml-2 rounded border px-3 py-1" onClick={() => refresh()}>Refresh</button>}
-        <p className="text-sm">{pushStatus}</p>
-
-        {push && (
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <h3 className="font-medium">My inbox</h3>
-              {inbox.length === 0 && <p className="text-sm text-neutral-500">Empty. Messages sent after you opt in arrive here.</p>}
-              {inbox.map((n, i) => <p key={i} className="text-sm"><b>{n.title}</b> {n.message}</p>)}
-            </div>
-            <div>
-              <h3 className="font-medium">The channel&apos;s latest messages</h3>
-              {channelNews.map((n, i) => <p key={i} className="text-sm"><b>{n.title}</b> {n.message?.slice(0, 120)}</p>)}
-            </div>
+      <section className="listener-panel" aria-labelledby="live-heading">
+        <div className="listener-intro">
+          <div>
+            <h2 id="live-heading">Live mint feed</h2>
+            <p>{listenerStatus}</p>
           </div>
+          {permission !== "granted" && permission !== "unsupported" && (
+            <button className="secondary-button compact-button" onClick={allowBrowserAlerts}>Allow browser pop-ups</button>
+          )}
+          {permission === "granted" && <span className="permission-ok">Browser pop-ups on</span>}
+        </div>
+
+        {alerts.length === 0 ? (
+          <div className="event-empty">
+            <span className="listening-ring" aria-hidden="true" />
+            <div><strong>Waiting for the next mint</strong><p>Keep this tab open, then mint from Create card or Gasless mint.</p></div>
+          </div>
+        ) : (
+          <ol className="event-list">
+            {alerts.map((alert) => (
+              <li key={alert.id}>
+                <span className="event-token">#{alert.tokenId}</span>
+                <div><strong>Minted to <Who address={alert.to} /></strong><small title={alert.to}>{alert.to}</small></div>
+                <a href={`https://sepolia.etherscan.io/tx/${alert.tx}`} target="_blank" rel="noreferrer">Etherscan ↗</a>
+              </li>
+            ))}
+          </ol>
         )}
       </section>
+
+      <section className="push-section" aria-labelledby="push-heading">
+        <div>
+          <h2 id="push-heading">Push Protocol inbox</h2>
+          <p>Subscribe to the project’s staging channel and read wallet-native notifications in the dApp.</p>
+          <div className="push-actions">
+            {!push && <button className="primary-button compact-button" disabled={!isConnected || !pushChannel} onClick={signInToPush}>Open my Push inbox</button>}
+            {push && !subscribed && <button className="primary-button compact-button" onClick={subscribeToPush}>Subscribe to channel</button>}
+            {push && <button className="secondary-button compact-button" onClick={() => refreshPush()}>Refresh inbox</button>}
+          </div>
+          <p className="field-help" aria-live="polite">{pushStatus}</p>
+        </div>
+
+        <div className="push-columns">
+          <div>
+            <h3>My inbox</h3>
+            {inbox.length === 0 && <p className="push-empty">No inbox messages yet.</p>}
+            {inbox.map((note, index) => <article key={`${note.title}-${index}`}><strong>{note.title}</strong><p>{note.message}</p></article>)}
+          </div>
+          <div>
+            <h3>Channel updates</h3>
+            {channelNews.length === 0 && <p className="push-empty">No channel updates loaded.</p>}
+            {channelNews.map((note, index) => <article key={`${note.title}-${index}`}><strong>{note.title}</strong><p>{note.message}</p></article>)}
+          </div>
+        </div>
+      </section>
+
+      <aside className="listener-note">
+        <strong>Why this page must stay open</strong>
+        <p>The browser is doing the listening, so alerts stop when this tab closes. A real product would run the listener on an always-on server, save processed block numbers, and send notifications from there; the included Telegram listener demonstrates that pattern.</p>
+      </aside>
     </div>
   );
 }

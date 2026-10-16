@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { createPublicClient, encodeFunctionData, http } from "viem";
+import { createPublicClient, encodeFunctionData, http, isAddress } from "viem";
 import { sepolia } from "viem/chains";
 import { entryPoint07Address } from "viem/account-abstraction";
 import { createSmartAccountClient } from "permissionless";
@@ -12,130 +12,173 @@ import { getWalletClient } from "wagmi/actions";
 import { config } from "@/lib/wagmi";
 import { NFT_ADDRESS, nftAbi } from "@/contracts/nft";
 
-// 1. The EntryPoint: the one contract that checks and runs every UserOperation (version 0.7)
 const entryPoint = { address: entryPoint07Address, version: "0.7" } as const;
+const publicClient = createPublicClient({
+  chain: sepolia,
+  transport: http(process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com"),
+});
 
-// 2. A client that only READS Sepolia
-const publicClient = createPublicClient({ chain: sepolia, transport: http(process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL) });
+function friendlyError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message.includes("user rejected") || message.includes("user denied")) return "You cancelled the wallet request. Nothing was sent.";
+  if (message.includes("paymaster") || message.includes("sponsor")) return "Pimlico could not sponsor this operation. Check the Sepolia sponsorship policy.";
+  if (message.includes("insufficient") || message.includes("prefund")) return "The smart account or paymaster does not have enough gas funding.";
+  if (message.includes("chain") || message.includes("network")) return "Switch your wallet to Sepolia and try again.";
+  return "The gasless mint could not be completed. Check the wallet and try again.";
+}
 
-// 3. The smart account, owned by the wallet you connected. Your wallet only SIGNS.
 async function getSmartAccount() {
-  const walletClient = await getWalletClient(config, { chainId: sepolia.id });
-  return toSimpleSmartAccount({ client: publicClient, owner: walletClient, entryPoint });
+  const owner = await getWalletClient(config, { chainId: sepolia.id });
+  if (!owner) throw new Error("wallet not connected");
+  return toSimpleSmartAccount({ client: publicClient, owner, entryPoint });
 }
 
 export default function SmartAccountPage() {
   const { isConnected } = useAccount();
   const { switchChainAsync } = useSwitchChain();
-
-  const [accountAddress, setAccountAddress] = useState("");
+  const [accountAddress, setAccountAddress] = useState<`0x${string}` | "">("");
   const [deployed, setDeployed] = useState<boolean | null>(null);
   const [uri, setUri] = useState("");
-  const [two, setTwo] = useState(false);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState("Ready for one sponsored batch of two mints.");
+  const [pending, setPending] = useState(false);
+  const [userOpHash, setUserOpHash] = useState("");
   const [txHash, setTxHash] = useState("");
 
-  // Step 1: work out the smart account's address. It exists BEFORE the contract is deployed.
-  async function showAccount() {
+  async function loadAccount() {
     try {
+      setStatus("Checking your smart account…");
       await switchChainAsync({ chainId: sepolia.id });
       const account = await getSmartAccount();
       const code = await publicClient.getCode({ address: account.address });
       setAccountAddress(account.address);
       setDeployed(Boolean(code));
-    } catch (e) {
-      setStatus(`Error: ${(e as Error).message}`);
+      setStatus("Smart account ready. Your wallet remains its signer.");
+    } catch (error) {
+      setStatus(friendlyError(error));
     }
   }
 
-  // Step 2: one UserOperation that mints from the smart account. The paymaster pays the gas.
-  async function mintFromSmartAccount() {
+  async function mintBatch() {
+    if (!uri.startsWith("ipfs://")) return;
+
     try {
+      setPending(true);
+      setUserOpHash("");
+      setTxHash("");
+      setStatus("Switching to Sepolia…");
       await switchChainAsync({ chainId: sepolia.id });
       const account = await getSmartAccount();
+      setAccountAddress(account.address);
 
-      // 4. The bundler and the paymaster, reached through OUR server route
       const bundlerUrl = `${window.location.origin}/api/bundler`;
       const pimlico = createPimlicoClient({ transport: http(bundlerUrl), entryPoint });
-
-      // 5. The client that builds the UserOperation, asks you to sign it, and sends it to the bundler
       const smartAccountClient = createSmartAccountClient({
         account,
         chain: sepolia,
-        bundlerTransport: http(bundlerUrl),
-        paymaster: pimlico, // "please pay the gas for this user"
+        bundlerTransport: http(bundlerUrl, { timeout: 60_000 }),
+        paymaster: pimlico,
         userOperation: {
           estimateFeesPerGas: async () => (await pimlico.getUserOperationGasPrice()).fast,
         },
       });
 
-      // 6. The calls: mint once, or twice (batching: two actions, one signature)
-      const mintCall = {
-        to: NFT_ADDRESS,
-        data: encodeFunctionData({ abi: nftAbi, functionName: "mint", args: [uri] }),
-      };
-      const calls = two ? [mintCall, mintCall] : [mintCall];
+      const mintData = encodeFunctionData({ abi: nftAbi, functionName: "mint", args: [uri] });
+      const calls = [
+        { to: NFT_ADDRESS, value: 0n, data: mintData },
+        { to: NFT_ADDRESS, value: 0n, data: mintData },
+      ];
 
-      setStatus("Sign the UserOperation in your wallet…");
-      const userOpHash = await smartAccountClient.sendUserOperation({ calls });
+      setStatus("Confirm one signature for both NFT mints…");
+      const hash = await smartAccountClient.sendUserOperation({ calls });
+      setUserOpHash(hash);
+      setStatus("UserOperation sent. Waiting for Pimlico to include it on Sepolia…");
 
-      setStatus(`Sent to the bundler. UserOp hash: ${userOpHash}. Waiting…`);
-      const receipt = await smartAccountClient.waitForUserOperationReceipt({ hash: userOpHash });
-
+      const receipt = await smartAccountClient.waitForUserOperationReceipt({ hash, timeout: 120_000 });
       setTxHash(receipt.receipt.transactionHash);
-      setDeployed(true);
-      setStatus(receipt.success ? "Done ✅" : "The UserOperation was included but failed ❌");
-    } catch (e) {
-      setStatus(`Error: ${(e as Error).message}`);
+      setDeployed(Boolean(await publicClient.getCode({ address: account.address })));
+      setStatus(receipt.success ? "Success: two NFTs minted in one sponsored UserOperation." : "The UserOperation was included but its calls failed.");
+    } catch (error) {
+      setStatus(friendlyError(error));
+    } finally {
+      setPending(false);
     }
   }
 
+  const contractReady = isAddress(NFT_ADDRESS);
+
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Mint from a smart account, with no gas</h1>
+    <div className="page-stack aa-page">
+      <header className="page-heading">
+        <div>
+          <h1>Two mints. One signature. No gas.</h1>
+          <p>A Pimlico paymaster sponsors one ERC-4337 UserOperation containing two calls to the verified ClassNFT contract.</p>
+        </div>
+        <span className="network-stamp">Sepolia · ERC-4337</span>
+      </header>
 
-      <section className="space-y-2">
-        <h2 className="text-lg font-semibold">1. Your smart account</h2>
-        <button className="rounded border px-3 py-1 disabled:opacity-50" disabled={!isConnected} onClick={showAccount}>
-          Show my smart account
-        </button>
-        {accountAddress && (
-          <div className="break-all rounded border bg-white p-3 text-sm">
-            <p><b>Address:</b> {accountAddress}</p>
-            <p><b>Deployed yet?</b> {deployed ? "YES" : "NO — it exists only as an address until its first UserOperation"}</p>
-            <a className="underline" href={`https://sepolia.etherscan.io/address/${accountAddress}`} target="_blank">
-              Open it on Etherscan
-            </a>
+      <div className="aa-layout">
+        <section className="folio-panel aa-action" aria-labelledby="gasless-heading">
+          <h2 id="gasless-heading">Send the sponsored batch</h2>
+          <p className="section-copy">Your connected wallet signs only. The smart account executes both mints, and Pimlico pays the network fee.</p>
+
+          <div className="account-strip">
+            <div>
+              <span>Smart account</span>
+              <strong>{accountAddress || "Not loaded yet"}</strong>
+              {accountAddress && <small>{deployed ? "Deployed on Sepolia" : "Counterfactual — deploys with the first UserOperation"}</small>}
+            </div>
+            <button className="secondary-button compact-button" onClick={loadAccount} disabled={!isConnected || pending}>
+              {accountAddress ? "Refresh" : "Show account"}
+            </button>
           </div>
-        )}
-      </section>
 
-      <section className="space-y-2">
-        <h2 className="text-lg font-semibold">2. Mint with it</h2>
-        <input
-          className="w-full rounded border px-2 py-1"
-          placeholder="ipfs://… (the Token URI from the IPFS NFT page)"
-          value={uri}
-          onChange={(e) => setUri(e.target.value)}
-        />
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={two} onChange={(e) => setTwo(e.target.checked)} />
-          Mint two in ONE UserOperation (batching)
-        </label>
-        <button
-          className="rounded bg-black px-3 py-1 text-white disabled:opacity-50"
-          disabled={!isConnected || !uri.startsWith("ipfs://")}
-          onClick={mintFromSmartAccount}
-        >
-          Mint from my smart account
-        </button>
-        <p className="break-all text-sm">{status}</p>
-        {txHash && (
-          <a className="text-sm underline" href={`https://sepolia.etherscan.io/tx/${txHash}`} target="_blank">
-            See the transaction on Etherscan: who sent it, and to which contract?
-          </a>
-        )}
-      </section>
+          <label className="field-group">
+            <span>IPFS metadata URI</span>
+            <input
+              className="text-field"
+              placeholder="ipfs://bafy…"
+              value={uri}
+              onChange={(event) => setUri(event.target.value.trim())}
+              disabled={pending}
+            />
+            <small className="field-help">Use a metadata URI created on the Create card page. Both NFTs will store this same URI.</small>
+          </label>
+
+          <div className="batch-preview" aria-label="Calls inside this UserOperation">
+            <div><span>Call 1</span><strong>ClassNFT.mint(uri)</strong></div>
+            <div><span>Call 2</span><strong>ClassNFT.mint(uri)</strong></div>
+          </div>
+
+          <button className="primary-button mint-button" disabled={!isConnected || !uri.startsWith("ipfs://") || !contractReady || pending} onClick={mintBatch}>
+            {pending ? "Sending sponsored batch…" : "Gasless mint two NFTs"}
+          </button>
+          {!isConnected && <p className="field-help">Connect a wallet so it can authorize the smart account.</p>}
+
+          <div className="operation-status" aria-live="polite">
+            <strong>Status</strong>
+            <p>{status}</p>
+            {userOpHash && <p><span>UserOperation:</span> <code>{userOpHash}</code></p>}
+            {txHash && (
+              <a href={`https://sepolia.etherscan.io/tx/${txHash}`} target="_blank" rel="noreferrer">
+                View the confirmed transaction on Etherscan <span aria-hidden="true">↗</span>
+              </a>
+            )}
+          </div>
+        </section>
+
+        <aside className="aa-proof" aria-label="How the gasless mint works">
+          <h2>What happens on-chain</h2>
+          <ol>
+            <li><span>1</span><div><strong>Your wallet signs</strong><p>No Sepolia ETH leaves the wallet.</p></div></li>
+            <li><span>2</span><div><strong>Pimlico sponsors</strong><p>The paymaster accepts the gas cost.</p></div></li>
+            <li><span>3</span><div><strong>EntryPoint executes</strong><p>Both mint calls run inside one UserOperation.</p></div></li>
+          </ol>
+          <dl>
+            <div><dt>Target</dt><dd>{NFT_ADDRESS}</dd></div>
+            <div><dt>EntryPoint</dt><dd>{entryPoint07Address}</dd></div>
+          </dl>
+        </aside>
+      </div>
     </div>
   );
 }

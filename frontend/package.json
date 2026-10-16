@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test --experimental-strip-types src/lib/*.test.ts"
+    "test": "node --test --experimental-strip-types src/lib/*.test.ts",
+    "listener": "node --env-file=.env.listener.local scripts/watch-mints.mjs"
   },
   "dependencies": {
     "@pushprotocol/restapi": "^1.7.32",

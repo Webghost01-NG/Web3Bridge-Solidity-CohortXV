@@ -9,6 +9,8 @@ const links = [
   ["/", "Overview"],
   ["/ens", "ENS profile"],
   ["/nft", "Create card"],
+  ["/aa", "Gasless mint"],
+  ["/notifications", "Live alerts"],
 ];
 
 export function Nav() {
