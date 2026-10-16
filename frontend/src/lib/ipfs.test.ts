@@ -3,8 +3,8 @@ import test from "node:test";
 import { fetchNftMetadata, ipfsToHttp } from "./ipfs.ts";
 
 test("converts IPFS URIs to gateway URLs", () => {
-  assert.equal(ipfsToHttp("ipfs://bafy123"), "https://gateway.pinata.cloud/ipfs/bafy123");
-  assert.equal(ipfsToHttp("ipfs://ipfs/bafy123"), "https://gateway.pinata.cloud/ipfs/bafy123");
+  assert.equal(ipfsToHttp("ipfs://bafybeidr252jbtpqqkaod2hqu2jteomxjdhijv3jt7nndkbne6dfu52fma"), "/api/ipfs/bafybeidr252jbtpqqkaod2hqu2jteomxjdhijv3jt7nndkbne6dfu52fma");
+  assert.equal(ipfsToHttp("ipfs://ipfs/bafybeidr252jbtpqqkaod2hqu2jteomxjdhijv3jt7nndkbne6dfu52fma"), "/api/ipfs/bafybeidr252jbtpqqkaod2hqu2jteomxjdhijv3jt7nndkbne6dfu52fma");
 });
 
 test("keeps ordinary HTTP URLs unchanged", () => {

@@ -61,8 +61,10 @@ function ProfileResult({ result }: { result: Result }) {
       <div className="result-banner"><span>Profile card verified on Sepolia</span></div>
       <div className="result-body">
         <div className="result-image">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={ipfsToHttp(result.metadata.image)} alt={`${result.metadata.name} profile`} />
+          {result.metadata.image ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={ipfsToHttp(result.metadata.image)} alt={`${result.metadata.name} profile`} />
+          ) : <span>IPFS content is temporarily unavailable</span>}
         </div>
         <div className="result-copy">
           <span className="token-label">Web3Bridge Class · Token #{result.tokenId}</span>
@@ -268,6 +270,11 @@ export default function NftPage() {
     try {
       setLookupStatus("Reading the token from Sepolia…");
       const tokenId = BigInt(lookupId);
+      const totalMinted = await publicClient.readContract({ address: NFT_ADDRESS, abi: nftAbi, functionName: "totalMinted" });
+      if (tokenId >= totalMinted) {
+        setLookupStatus(`Token #${lookupId} has not been minted on this contract.`);
+        return;
+      }
       let uri: string;
       let owner: Address;
       try {
@@ -276,15 +283,19 @@ export default function NftPage() {
           publicClient.readContract({ address: NFT_ADDRESS, abi: nftAbi, functionName: "ownerOf", args: [tokenId] }),
         ]);
       } catch {
-        setLookupStatus(`Token #${lookupId} was not found on the Sepolia contract.`);
+        setLookupStatus(`Token #${lookupId} exists, but Sepolia could not return its details. Check your connection and try again.`);
         return;
       }
       let metadata: NftMetadata;
       try {
         metadata = await fetchNftMetadata(uri, `Profile NFT #${lookupId}`);
       } catch {
-        setLookupStatus(`Token #${lookupId} exists, but its IPFS metadata is unavailable.`);
-        return;
+        metadata = {
+          name: `Profile NFT #${lookupId}`,
+          description: "The token exists on Sepolia. Its IPFS content could not be reached right now.",
+          image: "",
+        };
+        setLookupStatus(`Token #${lookupId} is on Sepolia. IPFS is temporarily unavailable; showing its on-chain details.`);
       }
       setLookupResult({ tokenId: lookupId, uri, owner, metadata });
       setLookupStatus("");

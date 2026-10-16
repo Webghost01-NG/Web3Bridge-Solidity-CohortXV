@@ -2,7 +2,8 @@ export type NftMetadata = { name: string; description: string; image: string };
 
 export function ipfsToHttp(uri: string) {
   if (!uri.startsWith("ipfs://")) return uri;
-  return `https://gateway.pinata.cloud/ipfs/${uri.slice(7).replace(/^ipfs\//, "")}`;
+  const cid = uri.slice(7).replace(/^ipfs\//, "");
+  return `/api/ipfs/${encodeURIComponent(cid)}`;
 }
 
 export async function uploadToIpfs(file: File): Promise<string> {
@@ -27,9 +28,7 @@ export async function uploadNft(image: File, name: string, description: string) 
 
 export async function fetchNftMetadata(uri: string, fallbackName = "Profile NFT"): Promise<NftMetadata> {
   const cid = uri.startsWith("ipfs://") ? uri.slice(7).replace(/^ipfs\//, "") : "";
-  const urls = cid
-    ? [`https://gateway.pinata.cloud/ipfs/${cid}`, `https://ipfs.io/ipfs/${cid}`]
-    : [uri];
+  const urls = cid ? [`/api/ipfs/${encodeURIComponent(cid)}`] : [uri];
 
   for (const url of urls) {
     try {

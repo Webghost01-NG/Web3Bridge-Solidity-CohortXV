@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { createPublicClient, http, parseAbiItem } from "viem";
 import { sepolia } from "viem/chains";
 
-const required = ["NEXT_PUBLIC_NFT_ADDRESS", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"];
+const required = ["NEXT_PUBLIC_NFT_ADDRESS", "TELEGRAM_BOT_TOKEN"];
 for (const name of required) {
   if (!process.env[name]) throw new Error(`${name} is required`);
 }
@@ -11,8 +11,82 @@ for (const name of required) {
 const contract = process.env.NEXT_PUBLIC_NFT_ADDRESS;
 const rpcUrl = process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
 const statePath = resolve(process.env.LISTENER_STATE_FILE ?? ".listener/last-block.json");
+const subscriberPath = resolve(".listener/telegram-subscribers.json");
+const updatePath = resolve(".listener/telegram-update-offset.json");
+const telegramUrl = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
 const client = createPublicClient({ chain: sepolia, transport: http(rpcUrl) });
 const mintedEvent = parseAbiItem("event Minted(address indexed to, uint256 indexed tokenId, string uri)");
+
+async function readJson(path, fallback) {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    return fallback;
+  }
+}
+
+async function writeJson(path, value) {
+  await mkdir(dirname(path), { recursive: true });
+  const temporaryPath = `${path}.tmp`;
+  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  await rename(temporaryPath, path);
+}
+
+async function telegram(method, body) {
+  const response = await fetch(`${telegramUrl}/${method}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok || !result?.ok) throw new Error(`Telegram ${method} request failed`);
+  return result.result;
+}
+
+async function readSubscribers() {
+  const subscribers = await readJson(subscriberPath, []);
+  const initialChatId = process.env.TELEGRAM_CHAT_ID;
+  if (initialChatId && !subscribers.includes(String(initialChatId))) {
+    subscribers.push(String(initialChatId));
+    await writeJson(subscriberPath, subscribers);
+  }
+  return subscribers;
+}
+
+async function sendToChat(chatId, text) {
+  await telegram("sendMessage", { chat_id: chatId, text, disable_web_page_preview: true });
+}
+
+async function pollTelegramCommands() {
+  let { offset = 0 } = await readJson(updatePath, {});
+  const updates = await telegram("getUpdates", { offset, timeout: 0, allowed_updates: ["message"] });
+  for (const update of updates) {
+    const message = update.message;
+    const chatId = message?.chat?.id;
+    const text = message?.text?.trim() ?? "";
+    const command = text.split(/\s+/)[0].split("@")[0].toLowerCase();
+    let subscribers = await readSubscribers();
+
+    if (chatId && command === "/start") {
+      const id = String(chatId);
+      if (!subscribers.includes(id)) {
+        subscribers.push(id);
+        await writeJson(subscriberPath, subscribers);
+      }
+      await sendToChat(id, "You are subscribed to ClassNFT mint alerts. Send /stop to unsubscribe.");
+    } else if (chatId && command === "/stop") {
+      const id = String(chatId);
+      subscribers = subscribers.filter((subscriber) => subscriber !== id);
+      await writeJson(subscriberPath, subscribers);
+      await sendToChat(id, "You are unsubscribed from ClassNFT mint alerts. Send /start to subscribe again.");
+    }
+
+    offset = update.update_id + 1;
+    await writeJson(updatePath, { offset });
+  }
+}
 
 async function readLastBlock() {
   try {
@@ -37,12 +111,14 @@ async function sendTelegram(log) {
     `Transaction: https://sepolia.etherscan.io/tx/${log.transactionHash}`,
   ].join("\n");
 
-  const response = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chat_id: process.env.TELEGRAM_CHAT_ID, text, disable_web_page_preview: true }),
-  });
-  if (!response.ok) throw new Error(`Telegram returned HTTP ${response.status}`);
+  const subscribers = await readSubscribers();
+  for (const chatId of subscribers) {
+    try {
+      await sendToChat(chatId, text);
+    } catch {
+      console.error("Could not send a mint alert to one Telegram subscriber.");
+    }
+  }
 }
 
 async function sendPush(log) {
@@ -68,6 +144,7 @@ async function poll() {
 
   for (;;) {
     try {
+      await pollTelegramCommands();
       const latestBlock = await client.getBlockNumber();
       if (latestBlock > lastBlock) {
         const logs = await client.getLogs({
@@ -85,8 +162,8 @@ async function poll() {
         await saveLastBlock(latestBlock);
         lastBlock = latestBlock;
       }
-    } catch (error) {
-      console.error(error instanceof Error ? error.message : "Listener failed");
+    } catch {
+      console.error("Telegram or Sepolia polling failed; the listener will retry.");
     }
 
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 12_000));

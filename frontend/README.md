@@ -63,11 +63,10 @@ For the Telegram listener, create an ignored `.env.listener.local` file:
 NEXT_PUBLIC_NFT_ADDRESS=0x39d7712A2E18d4c0597E849Cb9dc6869F6996639
 NEXT_PUBLIC_SEPOLIA_RPC_URL=
 TELEGRAM_BOT_TOKEN=
-TELEGRAM_CHAT_ID=
 PUSH_CHANNEL_PRIVATE_KEY=
 ```
 
-Run it with `npm run listener`. It writes its last handled Sepolia block to `.listener/last-block.json`, so restarting it does not replay completed blocks. `PUSH_CHANNEL_PRIVATE_KEY` is optional and must belong to a Push staging channel or its delegate; never commit it.
+Run it with `npm run listener` and message your Telegram bot with `/start`. The listener saves each subscriber's chat ID and Telegram update offset under the ignored `.listener/` directory, then sends every new mint alert to all subscribed chats. Users can send `/stop` to unsubscribe. Keep the listener process running. It also saves its last handled Sepolia block in `.listener/last-block.json`; `PUSH_CHANNEL_PRIVATE_KEY` is optional and must belong to a Push staging channel or its delegate. Never commit secrets.
 
 ## Foundry batch test
 
