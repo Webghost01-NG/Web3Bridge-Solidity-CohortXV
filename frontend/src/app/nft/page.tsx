@@ -1,14 +1,25 @@
 "use client";
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
-import { parseEventLogs, type Address, type Hash } from "viem";
-import { useAccount, useEnsName, usePublicClient, useSwitchChain, useWriteContract } from "wagmi";
+import { createPublicClient, encodeFunctionData, http, parseEventLogs, type Address, type Hash } from "viem";
+import { entryPoint07Address } from "viem/account-abstraction";
+import { createSmartAccountClient } from "permissionless";
+import { toSimpleSmartAccount } from "permissionless/accounts";
+import { createPimlicoClient } from "permissionless/clients/pimlico";
+import { useAccount, useEnsName, usePublicClient, useSwitchChain } from "wagmi";
+import { getWalletClient } from "wagmi/actions";
 import { mainnet, sepolia } from "wagmi/chains";
 import { NFT_ADDRESS, nftAbi } from "@/contracts/nft";
 import { fetchNftMetadata, ipfsToHttp, uploadNft, type NftMetadata } from "@/lib/ipfs";
+import { config } from "@/lib/wagmi";
 
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
+const entryPoint = { address: entryPoint07Address, version: "0.7" } as const;
+const aaPublicClient = createPublicClient({
+  chain: sepolia,
+  transport: http(process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com"),
+});
 
 type Result = {
   tokenId: string;
@@ -22,14 +33,14 @@ type MintStep = "idle" | "uploading" | "wallet" | "confirming" | "complete";
 const steps: { key: MintStep; label: string }[] = [
   { key: "idle", label: "Picture" },
   { key: "uploading", label: "IPFS" },
-  { key: "wallet", label: "Sepolia" },
+  { key: "wallet", label: "Pimlico" },
   { key: "complete", label: "Profile" },
 ];
 
 function friendlyError(error: unknown) {
   const message = error instanceof Error ? error.message : "";
   if (/rejected|denied|cancelled/i.test(message)) return "The request was cancelled in your wallet. Nothing was minted.";
-  if (/insufficient funds/i.test(message)) return "Your wallet needs more Sepolia ETH for gas.";
+  if (/paymaster|sponsor/i.test(message)) return "Pimlico could not sponsor this mint. Please try again shortly.";
   if (/already pending|request is already pending/i.test(message)) return "A wallet request is already open. Complete or cancel it, then try again.";
   if (/chain|network|switch/i.test(message)) return "Switch your wallet to Sepolia, then try again.";
   if (/failed to fetch|rpc|timeout/i.test(message)) return "Sepolia did not respond. Check your connection, then try again.";
@@ -75,7 +86,6 @@ function ProfileResult({ result }: { result: Result }) {
 export default function NftPage() {
   const { address, isConnected, chainId } = useAccount();
   const { switchChainAsync } = useSwitchChain();
-  const { writeContractAsync } = useWriteContract();
   const publicClient = usePublicClient({ chainId: sepolia.id });
 
   const [name, setName] = useState("");
@@ -85,6 +95,7 @@ export default function NftPage() {
   const [step, setStep] = useState<MintStep>("idle");
   const [mintError, setMintError] = useState("");
   const [mintNotice, setMintNotice] = useState("");
+  const [submittedUserOp, setSubmittedUserOp] = useState<Hash | null>(null);
   const [submittedHash, setSubmittedHash] = useState<Hash | null>(null);
   const [submittedMetadata, setSubmittedMetadata] = useState<NftMetadata | null>(null);
   const [result, setResult] = useState<Result | null>(null);
@@ -95,7 +106,12 @@ export default function NftPage() {
   const previewUrl = useMemo(() => (image ? URL.createObjectURL(image) : ""), [image]);
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
   useEffect(() => {
+    const savedUserOp = window.localStorage.getItem("profile-card-pending-userop") as Hash | null;
     const savedHash = window.localStorage.getItem("profile-card-pending-mint") as Hash | null;
+    if (savedUserOp) {
+      setSubmittedUserOp(savedUserOp);
+      setMintNotice("A previous gasless mint was submitted. Check its confirmation before minting again.");
+    }
     if (savedHash) {
       setSubmittedHash(savedHash);
       setMintNotice("A previous mint was submitted. Check its confirmation below before minting again.");
@@ -146,13 +162,43 @@ export default function NftPage() {
       setResult({ tokenId: tokenId.toString(), uri, owner: to, metadata, hash });
       setLookupId(tokenId.toString());
       setSubmittedHash(null);
+      setSubmittedUserOp(null);
       setSubmittedMetadata(null);
       setMintNotice("");
       window.localStorage.removeItem("profile-card-pending-mint");
+      window.localStorage.removeItem("profile-card-pending-userop");
       setStep("complete");
     } catch {
       setStep("idle");
       setMintNotice("Your transaction was submitted. Use Check confirmation below; do not mint again.");
+    }
+  }
+
+  async function confirmUserOperation(userOpHash: Hash, knownMetadata?: NftMetadata | null) {
+    setStep("confirming");
+    setMintError("");
+
+    try {
+      const response = await fetch("/api/bundler", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getUserOperationReceipt", params: [userOpHash] }),
+      });
+      const data = await response.json() as { result?: { success: boolean; receipt: { transactionHash: Hash } } | null };
+      if (!data.result) {
+        setStep("idle");
+        setMintNotice("Pimlico is still processing this mint. Wait a moment, then check again.");
+        return;
+      }
+      if (!data.result.success) throw new Error("UserOperation failed");
+
+      const transactionHash = data.result.receipt.transactionHash;
+      setSubmittedHash(transactionHash);
+      window.localStorage.setItem("profile-card-pending-mint", transactionHash);
+      await confirmMint(transactionHash, knownMetadata);
+    } catch (error) {
+      setStep("idle");
+      setMintError(friendlyError(error));
     }
   }
 
@@ -172,28 +218,44 @@ export default function NftPage() {
 
       setStep("wallet");
       if (chainId !== sepolia.id) await switchChainAsync({ chainId: sepolia.id });
-      const mintCall = {
-        address: NFT_ADDRESS,
-        abi: nftAbi,
-        functionName: "mint",
-        args: [uri],
-        account: address,
-      } as const;
-      await publicClient.simulateContract(mintCall);
-      const estimatedGas = await publicClient.estimateContractGas(mintCall);
-      const hash = await writeContractAsync({
-        ...mintCall,
-        gas: estimatedGas + estimatedGas / 5n,
-        chainId: sepolia.id,
+      const owner = await getWalletClient(config, { chainId: sepolia.id });
+      if (!owner) throw new Error("wallet not connected");
+      const account = await toSimpleSmartAccount({ client: aaPublicClient, owner, entryPoint });
+      const bundlerUrl = `${window.location.origin}/api/bundler`;
+      const pimlico = createPimlicoClient({ transport: http(bundlerUrl), entryPoint });
+      const smartAccountClient = createSmartAccountClient({
+        account,
+        chain: sepolia,
+        bundlerTransport: http(bundlerUrl, { timeout: 60_000 }),
+        paymaster: pimlico,
+        userOperation: { estimateFeesPerGas: async () => (await pimlico.getUserOperationGasPrice()).fast },
       });
-      setSubmittedHash(hash);
+
+      const userOpHash = await smartAccountClient.sendUserOperation({
+        calls: [{
+          to: NFT_ADDRESS,
+          value: 0n,
+          data: encodeFunctionData({ abi: nftAbi, functionName: "mint", args: [uri] }),
+        }],
+      });
+      setSubmittedUserOp(userOpHash);
       setSubmittedMetadata(metadata);
-      setMintNotice("Transaction submitted. Waiting for Sepolia confirmation…");
-      window.localStorage.setItem("profile-card-pending-mint", hash);
-      await confirmMint(hash, metadata);
+      setMintNotice("Gasless mint submitted. Pimlico is paying the fee…");
+      window.localStorage.setItem("profile-card-pending-userop", userOpHash);
+
+      const receipt = await smartAccountClient.waitForUserOperationReceipt({ hash: userOpHash, timeout: 120_000 });
+      if (!receipt.success) throw new Error("UserOperation failed");
+      const transactionHash = receipt.receipt.transactionHash;
+      setSubmittedHash(transactionHash);
+      window.localStorage.setItem("profile-card-pending-mint", transactionHash);
+      await confirmMint(transactionHash, metadata);
     } catch (error) {
       setStep("idle");
-      setMintError(friendlyError(error));
+      if (window.localStorage.getItem("profile-card-pending-userop")) {
+        setMintNotice("The gasless mint was submitted. Check its confirmation below; do not mint again.");
+      } else {
+        setMintError(friendlyError(error));
+      }
     }
   }
 
@@ -236,7 +298,7 @@ export default function NftPage() {
       <header className="page-heading">
         <div>
           <h1>Make my profile card</h1>
-          <p>Pin a picture and bio to IPFS, then mint the metadata URI through the verified ClassNFT contract.</p>
+          <p>Pin a picture and bio to IPFS, then mint through a smart account while Pimlico pays the Sepolia fee.</p>
         </div>
         <span className="network-stamp">Mints on Sepolia</span>
       </header>
@@ -244,7 +306,7 @@ export default function NftPage() {
       <div className="mint-layout">
         <section className="folio-panel mint-panel" aria-labelledby="mint-heading">
           <div className="section-heading-row">
-            <div><h2 id="mint-heading">Create your card</h2><p className="section-copy">Your picture uploads only when you press mint.</p></div>
+            <div><h2 id="mint-heading">Create your card</h2><p className="section-copy">Your picture uploads only when you press mint. Your wallet signs, but pays no gas.</p></div>
             <span className={chainId === sepolia.id ? "network-ready" : "network-waiting"}>{chainId === sepolia.id ? "Sepolia ready" : "Sepolia required"}</span>
           </div>
 
@@ -289,23 +351,23 @@ export default function NftPage() {
 
             <div className="mint-actions">
               {!isConnected && <p>Connect your wallet in the header to mint.</p>}
-              {isConnected && chainId !== sepolia.id && <p>Your wallet will ask to switch to Sepolia before minting.</p>}
-              <button className="primary-button mint-button" disabled={!isConnected || !image || !name.trim() || !bio.trim() || isBusy || Boolean(submittedHash)}>
+              {isConnected && chainId !== sepolia.id && <p>Your wallet will ask to switch to Sepolia before the gasless mint.</p>}
+              <button className="primary-button mint-button" disabled={!isConnected || !image || !name.trim() || !bio.trim() || isBusy || Boolean(submittedHash) || Boolean(submittedUserOp)}>
                 {step === "uploading" && "Uploading to IPFS…"}
                 {step === "wallet" && "Confirm in your wallet…"}
                 {step === "confirming" && "Waiting for confirmation…"}
-                {(step === "idle" || step === "complete") && "Upload and mint profile NFT"}
+                {(step === "idle" || step === "complete") && "Upload and mint gasless"}
               </button>
             </div>
-            {submittedHash && !result && (
+            {(submittedUserOp || submittedHash) && !result && (
               <div className="submitted-box" role="status">
-                <strong>Mint transaction submitted</strong>
+                <strong>Gasless mint submitted</strong>
                 <p>{mintNotice}</p>
                 <div className="submitted-actions">
-                  <button className="secondary-button" type="button" disabled={step === "confirming"} onClick={() => confirmMint(submittedHash, submittedMetadata)}>
+                  <button className="secondary-button" type="button" disabled={step === "confirming"} onClick={() => submittedHash ? confirmMint(submittedHash, submittedMetadata) : submittedUserOp && confirmUserOperation(submittedUserOp, submittedMetadata)}>
                     {step === "confirming" ? "Checking…" : "Check confirmation"}
                   </button>
-                  <a href={`https://sepolia.etherscan.io/tx/${submittedHash}`} target="_blank" rel="noreferrer">View on Etherscan ↗</a>
+                  {submittedHash && <a href={`https://sepolia.etherscan.io/tx/${submittedHash}`} target="_blank" rel="noreferrer">View on Etherscan ↗</a>}
                 </div>
               </div>
             )}
@@ -325,7 +387,7 @@ export default function NftPage() {
               <span className="token-label">Web3Bridge Class · Preview</span>
               <h2>{name || "Your profile name"}</h2>
               <p>{bio || "Your short bio will appear here before you mint."}</p>
-              <div className="preview-owner"><span>Owner</span><strong>{address ? shortAddress(address) : "Connect wallet"}</strong></div>
+              <div className="preview-owner"><span>Owner</span><strong>{address ? "Your smart account" : "Connect wallet"}</strong></div>
             </div>
           )}
         </aside>

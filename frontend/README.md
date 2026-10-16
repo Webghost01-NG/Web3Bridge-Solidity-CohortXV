@@ -9,7 +9,7 @@ Live site: https://profile-card-web3bridge.vercel.app
 - Resolves ENS names, avatars, descriptions, Twitter records, and ETH balances on Ethereum mainnet.
 - Reads the live ETH/USD price from Chainlink on Sepolia and refreshes it every 30 seconds.
 - Uploads profile pictures and NFT metadata to Pinata/IPFS through a server route.
-- Mints and reads profile NFTs from the verified ClassNFT contract on Sepolia.
+- Mints profile NFTs through a sponsored smart account and reads them from the verified ClassNFT contract on Sepolia.
 - Sends two NFT mint calls in one ERC-4337 UserOperation through Pimlico.
 - Shows new `Minted` events live with ENS names and browser pop-ups.
 - Includes an always-on Telegram listener and an optional Push Protocol inbox.
@@ -41,7 +41,7 @@ The Pinata JWT stays in the server upload route because it authorizes uploads to
 - NFT minting uses the verified [ClassNFT contract on Sepolia](https://sepolia.etherscan.io/address/0x39d7712A2E18d4c0597E849Cb9dc6869F6996639#code).
 - ETH/USD pricing uses the [Chainlink Sepolia feed](https://sepolia.etherscan.io/address/0x694AA1769357215DE4FAC081bf1f309aDC325306).
 
-To make a card, connect a wallet, choose a picture, enter a name and bio, and press **Upload & mint**. The app asks the wallet to switch to Sepolia if needed, uploads the picture and metadata to IPFS, then displays the confirmed token and transaction link.
+To make a card, connect a wallet, choose a picture, enter a name and bio, and press **Upload and mint gasless**. The app uploads the picture and metadata to IPFS, asks for one wallet signature, and Pimlico sponsors the Sepolia mint. The confirmed NFT belongs to the user's smart account.
 
 ## Day 4: gasless batch
 
