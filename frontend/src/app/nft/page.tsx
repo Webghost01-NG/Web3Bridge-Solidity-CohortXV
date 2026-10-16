@@ -138,6 +138,9 @@ export default function NftPage() {
   const [lookupId, setLookupId] = useState("0");
   const [lookupStatus, setLookupStatus] = useState("");
   const [lookupResult, setLookupResult] = useState<Result | null>(null);
+  const [myNfts, setMyNfts] = useState<Result[]>([]);
+  const [myNftsStatus, setMyNftsStatus] = useState("Connect your wallet to see your profile NFTs.");
+  const [myNftsReload, setMyNftsReload] = useState(0);
 
   const previewUrl = useMemo(() => (image ? URL.createObjectURL(image) : ""), [image]);
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
@@ -153,6 +156,69 @@ export default function NftPage() {
       setMintNotice("A previous mint was submitted. Check its confirmation below before minting again.");
     }
   }, []);
+
+  useEffect(() => {
+    if (!address || !publicClient) {
+      setMyNfts([]);
+      setMyNftsStatus("Connect your wallet to see your profile NFTs.");
+      return;
+    }
+
+    let cancelled = false;
+    async function loadMyNfts() {
+      setMyNftsStatus("Checking your wallet and gasless smart account…");
+      try {
+        const owners: Address[] = [address as Address];
+        try {
+          const wallet = await getWalletClient(config);
+          if (wallet) {
+            const smartAccount = await toSimpleSmartAccount({ client: aaPublicClient, owner: wallet, entryPoint });
+            owners.push(smartAccount.address);
+          }
+        } catch {
+          // Wallet-owned NFTs still load if the smart account cannot be derived.
+        }
+
+        const totalMinted = await publicClient.readContract({ address: NFT_ADDRESS, abi: nftAbi, functionName: "totalMinted" });
+        const owned: { tokenId: bigint; owner: Address; uri: string }[] = [];
+        const batchSize = 20n;
+        for (let start = 0n; start < totalMinted; start += batchSize) {
+          const end = start + batchSize < totalMinted ? start + batchSize : totalMinted;
+          const batch = await Promise.all(Array.from({ length: Number(end - start) }, (_, index) => start + BigInt(index)).map(async (tokenId) => {
+            try {
+              const [owner, uri] = await Promise.all([
+                publicClient.readContract({ address: NFT_ADDRESS, abi: nftAbi, functionName: "ownerOf", args: [tokenId] }),
+                publicClient.readContract({ address: NFT_ADDRESS, abi: nftAbi, functionName: "tokenURI", args: [tokenId] }),
+              ]);
+              return owners.some((candidate) => candidate.toLowerCase() === owner.toLowerCase()) ? { tokenId, owner, uri } : null;
+            } catch {
+              return null;
+            }
+          }));
+          owned.push(...batch.filter((item): item is NonNullable<typeof item> => item !== null));
+        }
+
+        const profiles = await Promise.all(owned.reverse().map(async ({ tokenId, owner, uri }) => {
+          let metadata: NftMetadata;
+          try {
+            metadata = await fetchNftMetadata(uri, `Profile NFT #${tokenId}`);
+          } catch {
+            metadata = { name: `Profile NFT #${tokenId}`, description: "The token exists on Sepolia. Its IPFS content could not be reached right now.", image: "" };
+          }
+          return { tokenId: tokenId.toString(), owner, uri, metadata };
+        }));
+
+        if (cancelled) return;
+        setMyNfts(profiles);
+        setMyNftsStatus(profiles.length ? `${profiles.length} profile NFT${profiles.length === 1 ? "" : "s"} found.` : "No profile NFTs found for this wallet yet.");
+      } catch {
+        if (!cancelled) setMyNftsStatus("Could not load your NFTs from Sepolia. Check your connection and try again.");
+      }
+    }
+
+    void loadMyNfts();
+    return () => { cancelled = true; };
+  }, [address, publicClient, myNftsReload]);
 
   const activeStep = step === "confirming" ? "wallet" : step;
   const activeIndex = steps.findIndex((item) => item.key === activeStep);
@@ -197,6 +263,7 @@ export default function NftPage() {
       const metadata = knownMetadata ?? await fetchNftMetadata(uri, `Profile NFT #${tokenId}`);
       setResult({ tokenId: tokenId.toString(), uri, owner: to, metadata, hash });
       setLookupId(tokenId.toString());
+      setMyNftsReload((value) => value + 1);
       setSubmittedHash(null);
       setSubmittedUserOp(null);
       setSubmittedMetadata(null);
@@ -451,6 +518,17 @@ export default function NftPage() {
           </div>
           {lookupStatus && <p className="field-help" role="status">{lookupStatus}</p>}
         </form>
+      </section>
+
+      <section className="my-nfts-section" aria-labelledby="my-nfts-heading">
+        <div className="my-nfts-heading">
+          <div>
+            <h2 id="my-nfts-heading">My profile NFTs</h2>
+            <p>{myNftsStatus}</p>
+          </div>
+          {address && <button className="secondary-button" type="button" onClick={() => setMyNftsReload((value) => value + 1)}>Refresh</button>}
+        </div>
+        {myNfts.length > 0 && <div className="my-nfts-grid">{myNfts.map((nft) => <ProfileResult key={nft.tokenId} result={nft} />)}</div>}
       </section>
 
       {lookupResult && <ProfileResult result={lookupResult} />}
