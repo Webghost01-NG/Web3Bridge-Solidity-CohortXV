@@ -49,9 +49,9 @@ Open `/aa`, connect a wallet, and paste an `ipfs://` metadata URI. One wallet si
 
 `PIMLICO_API_KEY` stays in Vercel's server-only environment and is used only by `/api/bundler`; it is never exposed through a `NEXT_PUBLIC_` variable.
 
-UserOperation Etherscan transaction: pending the first live sponsored batch.
+Sponsored UserOperation: [`0xb50d…a5cd`](https://sepolia.etherscan.io/tx/0x1f8d54285d6fc9af27ca7a858a21a55aa50b5283c002cbadf8d1f32255096614). It minted tokens `#22` and `#23` to smart account `0xb9C959F7510a9d12Aee568D8cCE1591e051Fe9eb` in one operation.
 
-On Etherscan, the outer transaction's **From** is Pimlico's bundler, and **To** is the ERC-4337 EntryPoint contract. The bundler submits the transaction, while Pimlico's paymaster deposit covers the UserOperation gas; the smart account is visible inside the EntryPoint event and internal execution.
+On Etherscan, **From** is Pimlico's bundler `0x4337005dB25dBad41da5692Ba1188751ee5D98B6`, and **To** is EntryPoint v0.7 `0x0000000071727De22E5E9d8BAf0edAc6f37dA032`. The bundler submitted the transaction, while Pimlico paymaster `0x777777777777AeC03fd955926DbF81597e66834C` covered the UserOperation gas from its deposit.
 
 ## Day 4: alerts
 
