@@ -264,6 +264,15 @@ textarea.text-field { resize: vertical; }
 .result-copy dt { color: var(--muted); }
 .result-copy dd { margin: 0; overflow-wrap: anywhere; }
 .result-copy dd a { color: var(--leaf-dark); font-weight: 700; }
+.ipfs-details { margin-top: 20px; border-top: 1px solid var(--rule); }
+.ipfs-details summary { padding: 14px 0 10px; color: var(--leaf-dark); font-weight: 700; cursor: pointer; }
+.ipfs-details summary:focus-visible, .ipfs-uri-row button:focus-visible { outline: 3px solid var(--leaf); outline-offset: 3px; }
+.ipfs-uri-row { display: grid; grid-template-columns: 1fr auto; gap: 7px 12px; padding: 10px 0; border-top: 1px solid var(--rule); }
+.ipfs-uri-row > span { grid-column: 1 / -1; color: var(--muted); font-size: 0.85rem; }
+.ipfs-uri-row code { min-width: 0; overflow-wrap: anywhere; color: var(--ink); font-size: 0.82rem; }
+.ipfs-uri-row > div { display: flex; align-items: start; gap: 12px; }
+.ipfs-uri-row a, .ipfs-uri-row button { color: var(--leaf-dark); font-size: 0.85rem; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+.ipfs-copy-status { min-height: 1.2em; margin: 4px 0 0; color: var(--muted); font-size: 0.82rem; }
 
 .lookup-section { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: end; padding: 38px 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
 .lookup-section h2 { margin-bottom: 8px; }

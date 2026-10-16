@@ -55,6 +55,16 @@ function shortAddress(address: string) {
 
 function ProfileResult({ result }: { result: Result }) {
   const { data: ownerEns } = useEnsName({ address: result.owner, chainId: mainnet.id });
+  const [copyMessage, setCopyMessage] = useState("");
+
+  async function copyUri(label: string, uri: string) {
+    try {
+      await navigator.clipboard.writeText(uri);
+      setCopyMessage(`${label} copied`);
+    } catch {
+      setCopyMessage("Copy is unavailable in this browser");
+    }
+  }
 
   return (
     <article className="mint-result" aria-labelledby={`profile-${result.tokenId}`}>
@@ -79,6 +89,30 @@ function ProfileResult({ result }: { result: Result }) {
               View transaction on Etherscan ↗
             </a>
           )}
+          <details className="ipfs-details">
+            <summary>IPFS details</summary>
+            <div className="ipfs-uri-row">
+              <span>Metadata URI</span>
+              <code>{result.uri}</code>
+              <div>
+                <a href={ipfsToHttp(result.uri)} target="_blank" rel="noreferrer">Open ↗</a>
+                <button type="button" onClick={() => copyUri("Metadata URI", result.uri)}>Copy</button>
+              </div>
+            </div>
+            <div className="ipfs-uri-row">
+              <span>Image URI</span>
+              {result.metadata.image ? (
+                <>
+                  <code>{result.metadata.image}</code>
+                  <div>
+                    <a href={ipfsToHttp(result.metadata.image)} target="_blank" rel="noreferrer">Open ↗</a>
+                    <button type="button" onClick={() => copyUri("Image URI", result.metadata.image)}>Copy</button>
+                  </div>
+                </>
+              ) : <code>Image URI unavailable</code>}
+            </div>
+            <p className="ipfs-copy-status" aria-live="polite">{copyMessage}</p>
+          </details>
         </div>
       </div>
     </article>
