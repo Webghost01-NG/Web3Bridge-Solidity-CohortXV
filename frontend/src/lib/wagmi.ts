@@ -1,5 +1,12 @@
-import { http, createConfig, injected } from "wagmi";
+import { fallback, http, createConfig, injected } from "wagmi";
 import { mainnet, sepolia } from "wagmi/chains";
+
+const sepoliaRpc = process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL;
+const sepoliaTransports = [
+  ...(sepoliaRpc ? [http(sepoliaRpc)] : []),
+  http("https://ethereum-sepolia-rpc.publicnode.com"),
+  http("https://sepolia.drpc.org"),
+];
 
 // The settings of our whole app, in one object.
 export const config = createConfig({
@@ -11,7 +18,7 @@ export const config = createConfig({
 
   // 3. Where to READ each network from (an RPC URL). Writing always goes through the wallet.
   transports: {
-    [sepolia.id]: http(process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL),
+    [sepolia.id]: fallback(sepoliaTransports),
     [mainnet.id]: http(process.env.NEXT_PUBLIC_MAINNET_RPC_URL),
   },
 

@@ -1,4 +1,4 @@
-// The ClassNFT contract, already deployed on Sepolia by the instructor
+// The verified ClassNFT contract deployed for this assignment on Sepolia.
 export const NFT_ADDRESS = process.env.NEXT_PUBLIC_NFT_ADDRESS as `0x${string}`;
 
 // Only the parts of the ABI we use: two functions to read, one to write, one event
@@ -16,6 +16,3 @@ export const nftAbi = [
     ],
   },
 ] as const;
-
-// Browsers cannot open ipfs:// links. A gateway is a normal website that fetches IPFS files for us.
-export const ipfsToHttp = (uri: string) => uri.replace("ipfs://", "https://ipfs.io/ipfs/");
